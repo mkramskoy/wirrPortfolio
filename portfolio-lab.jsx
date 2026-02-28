@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ScatterChart, Scatter, Cell, PieChart, Pie } from "recharts";
 
 // ─── Seed-able PRNG for reproducible Monte Carlo ───
@@ -86,6 +86,104 @@ const SCENARIOS = {
     corrShift: 0.15,
   },
 };
+
+// ─── CSV Parsing & Dynamic Portfolio Mapping ───
+function parsePortfolioCSV(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 2) return null;
+
+  const holdings = [];
+  let totalEUR = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    // Parse CSV fields, handling quoted values with commas (European decimal format)
+    const fields = [];
+    let current = '';
+    let inQuotes = false;
+    for (const ch of line) {
+      if (ch === '"') { inQuotes = !inQuotes; }
+      else if (ch === ',' && !inQuotes) { fields.push(current.trim()); current = ''; }
+      else { current += ch; }
+    }
+    fields.push(current.trim());
+
+    const product = fields[0] || '';
+    const isin = fields[1] || '';
+    // "Value in EUR" is the last column (index 6), European format: "155693,72" → 155693.72
+    const valueEURStr = fields[6] || '0';
+    const valueEUR = parseFloat(valueEURStr.replace(',', '.'));
+
+    if (isNaN(valueEUR) || valueEUR <= 0) continue;
+    holdings.push({ product, isin, valueEUR });
+    totalEUR += valueEUR;
+  }
+
+  return holdings.length > 0 ? { holdings, totalEUR } : null;
+}
+
+// ISIN → proxy mapping for the 12-asset universe
+const ISIN_PROXY_MAP = {
+  'IE00B4L5Y983': { name: 'iShares Core MSCI World', category: 'equity', split: { VTI: 0.60, VEA: 0.30, VWO: 0.10 } },
+  'IE00BMC38736': { name: 'VanEck Semiconductor ETF', category: 'equity', proxy: 'VTI' },
+  'IE00BDBRDM35': { name: 'iShares Global Agg Bond', category: 'bond', proxy: 'BND' },
+  'IE000RHYOR04': { name: 'iShares EUR Ultrashort Bond', category: 'bond', proxy: 'BND' },
+  'IE00BPVLQD13': { name: 'Xtrackers MSCI Japan', category: 'equity', proxy: 'VEA' },
+  'LU0908500753': { name: 'Amundi STOXX Europe 600', category: 'equity', proxy: 'VEA' },
+  'IE00BFM6TC58': { name: 'iShares $ Treasury 20+yr', category: 'bond', proxy: 'TLT' },
+  'JE00B1VS3770': { name: 'WisdomTree Physical Gold', category: 'alt', proxy: 'GLD' },
+  'US35138V1026': { name: 'Fox Factory (FOXF)', category: 'equity', proxy: 'VTI' },
+  'US02079K3059': { name: 'Alphabet (GOOGL)', category: 'equity', proxy: 'VTI' },
+};
+
+const PROXY_TO_ASSET = {
+  VTI: 'US Large Cap (VTI)', VB: 'US Small Cap (VB)', VEA: "Int'l Developed (VEA)",
+  VWO: 'Emerging Markets (VWO)', BND: 'US Agg Bond (BND)', VTIP: 'TIPS (VTIP)',
+  TLT: 'Long Treasury (TLT)', HYG: 'High Yield (HYG)', GLD: 'Gold (GLD)',
+  VNQ: 'REITs (VNQ)', DJP: 'Commodities (DJP)', DBMF: 'Managed Futures (DBMF)',
+};
+
+function buildMyPortfolioFromCSV(parsed) {
+  const proxyValues = {};
+  ASSET_NAMES.forEach(n => { proxyValues[n] = 0; });
+
+  const holdings = [];
+
+  for (const h of parsed.holdings) {
+    const mapping = ISIN_PROXY_MAP[h.isin];
+    if (mapping) {
+      if (mapping.split) {
+        for (const [proxy, frac] of Object.entries(mapping.split)) {
+          proxyValues[PROXY_TO_ASSET[proxy]] += h.valueEUR * frac;
+        }
+      } else {
+        proxyValues[PROXY_TO_ASSET[mapping.proxy]] += h.valueEUR;
+      }
+      holdings.push({ name: mapping.name, value: Math.round(h.valueEUR), pct: (h.valueEUR / parsed.totalEUR) * 100, category: mapping.category });
+    } else if (h.product.toUpperCase().includes('CASH')) {
+      proxyValues[PROXY_TO_ASSET.BND] += h.valueEUR;
+      holdings.push({ name: 'Cash (EUR)', value: Math.round(h.valueEUR), pct: (h.valueEUR / parsed.totalEUR) * 100, category: 'bond' });
+    } else {
+      proxyValues[PROXY_TO_ASSET.VTI] += h.valueEUR;
+      holdings.push({ name: h.product.substring(0, 30), value: Math.round(h.valueEUR), pct: (h.valueEUR / parsed.totalEUR) * 100, category: 'equity' });
+    }
+  }
+
+  holdings.sort((a, b) => b.value - a.value);
+  const weights = ASSET_NAMES.map(n => proxyValues[n] / parsed.totalEUR);
+
+  const cats = { equity: 0, bond: 0, alt: 0 };
+  holdings.forEach(h => { cats[h.category] += h.pct; });
+
+  return {
+    weights,
+    color: "#06b6d4",
+    description: `Actual portfolio: ~${Math.round(cats.equity)}% equity, ~${Math.round(cats.bond)}% bonds, ~${Math.round(cats.alt)}% alt. EUR ${Math.round(parsed.totalEUR).toLocaleString()} total.`,
+    isActual: true,
+    holdings,
+    totalEUR: parsed.totalEUR,
+  };
+}
 
 // ─── Portfolio Strategies ───
 function buildPortfolios() {
@@ -257,12 +355,36 @@ function StrategyToggle({ name, color, active, onClick }) {
 // ─── Main App ───
 export default function PortfolioLab() {
   const [tab, setTab] = useState("Overview");
-  const [activeStrategies, setActiveStrategies] = useState(["60/40 Benchmark", "Risk Parity", "All Weather"]);
+  const [activeStrategies, setActiveStrategies] = useState(["My Portfolio", "60/40 Benchmark", "Risk Parity", "Max Sharpe"]);
   const [selectedScenario, setSelectedScenario] = useState("Base Case");
   const [mcYears, setMcYears] = useState(10);
   const [deepDiveStrategy, setDeepDiveStrategy] = useState("Risk Parity");
+  const [csvPortfolio, setCsvPortfolio] = useState(null);
+  const [csvError, setCsvError] = useState(null);
 
-  const portfolios = useMemo(() => buildPortfolios(), []);
+  // Fetch Portfolio.csv and parse holdings dynamically
+  useEffect(() => {
+    fetch('/Portfolio.csv')
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
+      .then(text => {
+        const parsed = parsePortfolioCSV(text);
+        if (parsed) setCsvPortfolio(buildMyPortfolioFromCSV(parsed));
+        else setCsvError('Portfolio.csv is empty or has no valid holdings');
+      })
+      .catch(err => setCsvError(`Portfolio.csv not found — ${err.message}`));
+  }, []);
+
+  const portfolios = useMemo(() => {
+    const base = buildPortfolios();
+    if (csvPortfolio) return { "My Portfolio": csvPortfolio, ...base };
+    return base;
+  }, [csvPortfolio]);
+  // Filter active strategies to only those that exist in portfolios
+  // (My Portfolio won't exist until CSV loads, or at all if CSV is missing)
+  const validActiveStrategies = useMemo(
+    () => activeStrategies.filter(name => name in portfolios),
+    [activeStrategies, portfolios]
+  );
   const assetData = ASSET_NAMES.map((n) => ASSETS[n]);
 
   const toggleStrategy = useCallback((name) => {
@@ -288,11 +410,11 @@ export default function PortfolioLab() {
   // ── Monte Carlo for active strategies ──
   const mcResults = useMemo(() => {
     const out = {};
-    for (const name of activeStrategies) {
+    for (const name of validActiveStrategies) {
       out[name] = runMonteCarlo(portfolios[name].weights, assetData, CORR_BASE, mcYears, 2000);
     }
     return out;
-  }, [activeStrategies, mcYears, portfolios, assetData]);
+  }, [validActiveStrategies, mcYears, portfolios, assetData]);
 
   // ── Efficient Frontier ──
   const frontier = useMemo(() => {
@@ -356,6 +478,17 @@ export default function PortfolioLab() {
         </div>
       )}
 
+      {/* CSV error banner */}
+      {csvError && (
+        <div style={{ background: "#2a1a1a", border: "1px solid #ef4444", borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 20 }}>!</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#fca5a5" }}>Portfolio data unavailable</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{csvError}. Place your DEGIRO export as <code style={{ background: "#1a1a2e", padding: "2px 6px", borderRadius: 4 }}>Portfolio.csv</code> in the project root.</div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════ OVERVIEW TAB ═══════ */}
       {tab === "Overview" && (
         <div>
@@ -377,7 +510,7 @@ export default function PortfolioLab() {
               <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" />
               <XAxis dataKey="name" tick={{ fill: "#6b7280", fontSize: 11 }} angle={-20} textAnchor="end" height={60} />
               <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} />
+              <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }} />
               <Bar dataKey="sharpe" radius={[6, 6, 0, 0]}>
                 {Object.entries(allStats).map(([name, s], i) => (
                   <Cell key={i} fill={s.color} />
@@ -407,7 +540,7 @@ export default function PortfolioLab() {
       {tab === "Strategies" && (
         <div>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#a5b4fc", marginBottom: 16 }}>Portfolio Allocations</h3>
-          {activeStrategies.map((name) => {
+          {validActiveStrategies.map((name) => {
             const s = allStats[name];
             return (
               <div key={name} style={{ marginBottom: 24, background: "#1a1a2e", borderRadius: 12, padding: 20, border: `1px solid ${s.color}30` }}>
@@ -444,6 +577,22 @@ export default function PortfolioLab() {
                     ) : null
                   )}
                 </div>
+                {/* Actual holdings detail for My Portfolio */}
+                {portfolios[name]?.holdings && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid #2a2a4a", paddingTop: 12 }}>
+                    <div style={{ fontSize: 11, color: "#8888aa", marginBottom: 8, fontWeight: 600 }}>ACTUAL HOLDINGS (EUR {Math.round(portfolios[name].totalEUR || 0).toLocaleString()})</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
+                      {portfolios[name].holdings.map((h) => (
+                        <div key={h.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#0f0f1a", borderRadius: 6, borderLeft: `3px solid ${categoryColors[h.category]}` }}>
+                          <span style={{ fontSize: 11, color: "#c0c0d0" }}>{h.name}</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: "#e0e0f0", fontVariantNumeric: "tabular-nums" }}>
+                            {h.pct.toFixed(1)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -476,7 +625,7 @@ export default function PortfolioLab() {
           </h3>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart
-              data={activeStrategies.map((name) => ({
+              data={validActiveStrategies.map((name) => ({
                 name: name.replace(" Benchmark", ""),
                 return: +(allStats[name].scenarios[selectedScenario] * 100).toFixed(2),
                 fill: allStats[name].color,
@@ -487,7 +636,7 @@ export default function PortfolioLab() {
               <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
               <YAxis dataKey="name" type="category" tick={{ fill: "#9ca3af", fontSize: 12 }} width={110} />
               <Tooltip
-                contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }}
+                contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }}
                 formatter={(v) => [`${v}%`, "Return"]}
               />
               <ReferenceLine x={0} stroke="#4b5563" />
@@ -513,7 +662,7 @@ export default function PortfolioLab() {
                 </tr>
               </thead>
               <tbody>
-                {activeStrategies.map((name) => (
+                {validActiveStrategies.map((name) => (
                   <tr key={name}>
                     <td style={{ padding: "8px 12px", color: allStats[name].color, fontWeight: 600, borderBottom: "1px solid #1a1a2e" }}>{name.replace(" Benchmark", "")}</td>
                     {Object.entries(SCENARIOS)
@@ -558,7 +707,7 @@ export default function PortfolioLab() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 24 }}>
-            {activeStrategies.map((name) => {
+            {validActiveStrategies.map((name) => {
               const mc = mcResults[name];
               if (!mc) return null;
               return (
@@ -609,7 +758,7 @@ export default function PortfolioLab() {
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "#a5b4fc", marginBottom: 12 }}>Distribution of Outcomes ($100 invested over {mcYears} years)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart
-              data={activeStrategies.map((name) => {
+              data={validActiveStrategies.map((name) => {
                 const mc = mcResults[name];
                 return mc ? { name: name.replace(" Benchmark", ""), p5: +mc.p5.toFixed(0), p25: +mc.p25.toFixed(0), median: +mc.median.toFixed(0), p75: +mc.p75.toFixed(0), p95: +mc.p95.toFixed(0) } : null;
               }).filter(Boolean)}
@@ -617,7 +766,7 @@ export default function PortfolioLab() {
               <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" />
               <XAxis dataKey="name" tick={{ fill: "#6b7280", fontSize: 11 }} angle={-15} textAnchor="end" height={55} />
               <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-              <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} formatter={(v) => [`$${v}`, ""]} />
+              <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }} formatter={(v) => [`$${v}`, ""]} />
               <Legend />
               <Bar dataKey="p5" name="5th %ile" fill="#ef444466" radius={[2, 2, 0, 0]} />
               <Bar dataKey="p25" name="25th %ile" fill="#f59e0b66" radius={[2, 2, 0, 0]} />
@@ -656,7 +805,7 @@ export default function PortfolioLab() {
                 domain={["auto", "auto"]}
               />
               <Tooltip
-                contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }}
+                contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }}
                 formatter={(val, name) => [`${val}%`, name === "x" ? "Volatility" : "Return"]}
                 labelFormatter={() => ""}
               />
@@ -740,7 +889,7 @@ export default function PortfolioLab() {
                             <Cell key={i} fill={c} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} />
+                        <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -750,7 +899,7 @@ export default function PortfolioLab() {
                       <BarChart data={riskContrib.sort((a, b) => b.contrib - a.contrib)} layout="vertical">
                         <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 10 }} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
                         <YAxis dataKey="name" type="category" tick={{ fill: "#9ca3af", fontSize: 10 }} width={95} />
-                        <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} formatter={(v) => [`${(v * 100).toFixed(1)}%`, "Risk %"]} />
+                        <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }} formatter={(v) => [`${(v * 100).toFixed(1)}%`, "Risk %"]} />
                         <Bar dataKey="contrib" fill={s.color} radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -767,7 +916,7 @@ export default function PortfolioLab() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" />
                     <XAxis dataKey="name" tick={{ fill: "#6b7280", fontSize: 10 }} angle={-15} textAnchor="end" height={50} />
                     <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
-                    <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} formatter={(v) => [`${v}%`, "Return"]} />
+                    <Tooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #2a2a4a", borderRadius: 8, color: "#e0e0f0" }} labelStyle={{ color: "#a5b4fc" }} itemStyle={{ color: "#e0e0f0" }} formatter={(v) => [`${v}%`, "Return"]} />
                     <ReferenceLine y={0} stroke="#4b5563" />
                     <Bar dataKey="return" radius={[4, 4, 0, 0]}>
                       {Object.entries(SCENARIOS)

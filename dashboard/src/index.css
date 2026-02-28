@@ -1,0 +1,16 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0f0f1a;
+  color: #e0e0f0;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+}

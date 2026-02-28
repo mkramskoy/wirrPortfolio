@@ -1,0 +1,16 @@
+# Portfolio data (contains personal financial information)
+Portfolio.csv
+*.csv
+
+# Generated charts (regenerate with: python3 portfolio_lab.py)
+*.png
+
+# Dashboard build
+dashboard/node_modules/
+dashboard/dist/
+
+# Claude
+.claude/
+
+# OS
+.DS_Store
