@@ -10,18 +10,18 @@ A two-part quantitative portfolio analysis system that goes beyond the tradition
 
 ### 1. Interactive Portfolio Lab (`portfolio-lab.jsx`)
 
-A React dashboard with 6 analytical views:
+A React dashboard with 6 analytical views, plus dynamic "My Portfolio" loaded from CSV:
 
 | Tab | Purpose |
 |-----|---------|
-| **Overview** | Sharpe ratio leaderboard across 7 strategies + full asset universe (12 assets across equity, bonds, alternatives) |
+| **Overview** | Sharpe ratio leaderboard across 8 strategies + full asset universe (12 assets across equity, bonds, alternatives) |
 | **Strategies** | Side-by-side allocation breakdowns with stacked weight bars, risk/return stats, and strategy descriptions |
 | **Scenarios** | Stress testing against 7 market scenarios (2008 GFC, stagflation, rate shock, tech crash, bull run, inflation spike) with heatmap comparison |
 | **Monte Carlo** | 2,000-path simulation with configurable horizons (5–30 years), percentile distributions, max drawdown estimates, and sparkline path previews |
 | **Efficient Frontier** | 4,000 random portfolios plotted on risk-return space with named strategies overlaid — uses Dirichlet-like sampling for realistic spread |
 | **Deep Dive** | Single-strategy focus: category allocation pie, risk contribution decomposition, full scenario bar chart |
 
-**7 Strategies Implemented:**
+**8 Strategies Implemented:**
 - 60/40 Benchmark (classic)
 - Risk Parity (Bridgewater-inspired equal risk contribution)
 - All Weather (balanced across economic regimes)
@@ -29,6 +29,7 @@ A React dashboard with 6 analytical views:
 - Min Variance (lowest total volatility)
 - Factor Tilt (value, momentum, quality)
 - Trend + Carry (crisis alpha seeker)
+- My Portfolio (dynamically loaded from Portfolio.csv via ISIN→proxy mapping)
 
 **12-Asset Universe:**
 - Equity: VTI, VB, VEA, VWO
@@ -129,7 +130,9 @@ The code is annotated with `PYTHON TIP` comments mapping Python patterns to Swif
 **React Dashboard:**
 - React 18+ with hooks
 - recharts (charting library)
-- No external data fetching — self-contained with parametric estimates
+- Fetches Portfolio.csv at runtime (DEGIRO export, European number format)
+- Maps holdings by ISIN to 12-asset proxy universe (MSCI World splits 60/30/10 across VTI/VEA/VWO)
+- Falls back gracefully with error banner when CSV is missing
 
 **Python Framework:**
 ```
@@ -146,3 +149,30 @@ pip install yfinance numpy pandas scipy matplotlib seaborn scikit-learn
 - **Transaction costs & rebalancing**: Realistic turnover modeling
 - **Walk-forward backtesting**: Out-of-sample validation with rolling windows
 - **Hierarchical Risk Parity (HRP)**: Tree-based clustering for more stable allocations
+
+---
+
+## Quick Reference
+
+### Commands
+- `python3` — use instead of `python` (system has no `python` alias)
+- `cd dashboard && npm run dev` — start Vite dev server on port 5173
+- `python3 portfolio_lab.py` — run full quant pipeline (generates PNGs)
+- `python3 analyze_my_portfolio.py` — analyze Portfolio.csv against framework
+
+### Project Structure
+- `portfolio-lab.jsx` — **single source of truth** for the React dashboard
+- `dashboard/` — Vite scaffold only; `App.jsx` imports `../../portfolio-lab.jsx`
+- `dashboard/public/Portfolio.csv` — symlink to `../../Portfolio.csv`
+- Do NOT create copies of `portfolio-lab.jsx` inside `dashboard/src/`
+
+### Data Handling
+- `Portfolio.csv` contains personal financial data — NEVER commit
+- CSV uses European format: commas as decimal separators, quoted fields
+- `.gitignore` + `pre-commit` hook block CSV check-in
+- PNGs are generated output, safe to delete and regenerate
+
+### Key Gotchas
+- Recharts tooltips need explicit `labelStyle`/`itemStyle` for dark mode readability
+- Recharts ScatterChart axes require `type="number"` or data renders as categorical
+- EUR ultrashort bond (0.5% vol) proxied to BND (4.5% vol) overstates risk ~9x
