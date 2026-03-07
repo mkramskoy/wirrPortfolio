@@ -9,8 +9,10 @@ Portfolio.csv
 dashboard/node_modules/
 dashboard/dist/
 
-# Claude
-.claude/
+# Claude (allow hooks and settings for Open Claw cloud sessions)
+.claude/*
+!.claude/hooks/
+!.claude/settings.json
 
 # OS
 .DS_Store
