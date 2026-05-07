@@ -134,6 +134,18 @@ const ISIN_PROXY_MAP = {
   'JE00B1VS3770': { name: 'WisdomTree Physical Gold', category: 'alt', proxy: 'GLD' },
   'US35138V1026': { name: 'Fox Factory (FOXF)', category: 'equity', proxy: 'VTI' },
   'US02079K3059': { name: 'Alphabet (GOOGL)', category: 'equity', proxy: 'VTI' },
+  // Target portfolio ISINs
+  'IE00BKM4GZ66': { name: 'iShares Core MSCI EM IMI (EIMI)', category: 'equity', proxy: 'VWO' },
+  'IE00BF4RFH31': { name: 'iShares MSCI World Small Cap (WSML)', category: 'equity', proxy: 'VB' },
+  'IE00BP3QZ601': { name: 'iShares MSCI World Quality (IWQU)', category: 'equity', proxy: 'VTI' },
+  'IE00BP3QZ825': { name: 'iShares MSCI World Momentum (IWMO)', category: 'equity', proxy: 'VTI' },
+  'IE00BGV5VN51': { name: 'Xtrackers AI & Big Data (XAIX)', category: 'equity', proxy: 'VTI' },
+  'IE00BYXG2H39': { name: 'iShares Nasdaq Biotech (IDBJ)', category: 'equity', proxy: 'VTI' },
+  'IE000YYE6WK5': { name: 'VanEck Defense (DFNS)', category: 'equity', proxy: 'VTI' },
+  'IE000M7V94E1': { name: 'VanEck Uranium & Nuclear (NUKL)', category: 'equity', proxy: 'VTI' },
+  'IE00B1XNHC34': { name: 'iShares Global Clean Energy (INRG)', category: 'equity', proxy: 'VTI' },
+  'IE00BYZK4552': { name: 'iShares Automation & Robotics (RBOT)', category: 'equity', proxy: 'VTI' },
+  'DE000A27Z304': { name: '21Shares Bitcoin Core ETP (BTCE)', category: 'alt', proxy: 'DJP' },
 };
 
 const PROXY_TO_ASSET = {
@@ -222,6 +234,14 @@ function buildPortfolios() {
       weights: [0.15, 0.05, 0.08, 0.05, 0.1, 0.08, 0.05, 0.04, 0.08, 0.05, 0.1, 0.17],
       color: "#ec4899",
       description: "Trend-following with carry overlay — crisis alpha seeker",
+    },
+    "Target Portfolio": {
+      // Core 60%: IWDA→split, STOXX/Japan→VEA, EIMI→VWO, WSML→VB, IWQU/IWMO→VTI
+      // Thematic 30%: all → VTI (semi, AI, biotech, defense, uranium, clean energy, robotics)
+      // Alt 10%: PHAU→GLD, BTCE→DJP (Bitcoin vol ~3× higher than DJP in practice)
+      weights: [0.588, 0.06, 0.154, 0.098, 0.0, 0.0, 0.0, 0.0, 0.05, 0.0, 0.05, 0.0],
+      color: "#f97316",
+      description: "Target rebalance: 60% core equity (global/EM/small cap/factors) + 30% thematic (semis, AI, biotech, defense, nuclear, clean energy) + 10% alt (gold, bitcoin). Zero bonds.",
     },
   };
 }
