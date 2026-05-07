@@ -12,5 +12,9 @@ dashboard/dist/
 # Claude
 .claude/
 
+# Python
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
